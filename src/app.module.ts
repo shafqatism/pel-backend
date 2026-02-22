@@ -11,6 +11,7 @@ import { LandRentalModule } from './modules/land-rental/land-rental.module';
 import { DocumentsModule } from './modules/documents/documents.module';
 import { MediaModule } from './modules/media/media.module';
 import { HseModule } from './modules/hse/hse.module';
+import { SettingsModule } from './modules/settings/settings.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { HseModule } from './modules/hse/hse.module';
     DocumentsModule,
     MediaModule,
     HseModule,
+    SettingsModule,
   ],
 })
 export class AppModule {}
