@@ -10,6 +10,7 @@ import { FoodModule } from './modules/food/food.module';
 import { LandRentalModule } from './modules/land-rental/land-rental.module';
 import { DocumentsModule } from './modules/documents/documents.module';
 import { MediaModule } from './modules/media/media.module';
+import { HseModule } from './modules/hse/hse.module';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { MediaModule } from './modules/media/media.module';
     LandRentalModule,
     DocumentsModule,
     MediaModule,
+    HseModule,
   ],
 })
 export class AppModule {}
