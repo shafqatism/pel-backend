@@ -74,4 +74,28 @@ export class HseService {
 
     return { data, total, limit, offset };
   }
+
+  async getStats() {
+    const incidents = await this.incidentRepo.find();
+    const audits = await this.auditRepo.find();
+    
+    const severityCount = {
+      low: incidents.filter(i => i.severity === 'low').length,
+      medium: incidents.filter(i => i.severity === 'medium').length,
+      high: incidents.filter(i => i.severity === 'high').length,
+      critical: incidents.filter(i => i.severity === 'critical').length,
+    };
+
+    const statusCount = {
+      open: incidents.filter(i => i.status === 'open').length,
+      investigating: incidents.filter(i => i.status === 'investigating').length,
+      closed: incidents.filter(i => i.status === 'closed').length,
+    };
+
+    const avgAuditScore = audits.length > 0 
+      ? audits.reduce((s, a) => s + a.score, 0) / audits.length 
+      : 100;
+
+    return { severityCount, statusCount, avgAuditScore };
+  }
 }

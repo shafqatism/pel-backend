@@ -1,9 +1,12 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query, ParseUUIDPipe } from '@nestjs/common';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { Controller, Get, Post, Patch, Delete, Param, Body, Query, ParseUUIDPipe, UseGuards } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ExpensesService } from '../services/expenses.service';
 import { CreateExpenseDto, UpdateExpenseDto, ExpenseQueryDto, UpdateExpenseStatusDto } from '../dto';
+import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 
 @ApiTags('finance - expenses')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('finance/expenses')
 export class ExpensesController {
   constructor(private readonly svc: ExpensesService) {}
@@ -24,6 +27,12 @@ export class ExpensesController {
   @ApiOperation({ summary: 'Financial stats for dashboard' })
   getStats() {
     return this.svc.getStats();
+  }
+
+  @Get('trends')
+  @ApiOperation({ summary: 'Expenditure trends for dashboard' })
+  getTrends() {
+    return this.svc.getTrends();
   }
 
   @Get(':id')

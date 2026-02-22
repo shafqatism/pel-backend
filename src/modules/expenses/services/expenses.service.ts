@@ -67,6 +67,27 @@ export class ExpensesService {
     };
   }
 
+  async getTrends() {
+    const expenses = await this.repo.find({
+      order: { dateIncurred: 'ASC' }
+    });
+
+    const monthly: Record<string, number> = {};
+    for (const e of expenses) {
+      if (e.status === 'approved') {
+        const date = new Date(e.dateIncurred);
+        const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+        monthly[key] = (monthly[key] || 0) + Number(e.amount);
+      }
+    }
+
+    const labels = Object.keys(monthly).sort();
+    return labels.map(label => ({
+      month: label,
+      amount: monthly[label]
+    }));
+  }
+
   async update(id: string, dto: UpdateExpenseDto): Promise<Expense> {
     const expense = await this.findOne(id);
     Object.assign(expense, dto);

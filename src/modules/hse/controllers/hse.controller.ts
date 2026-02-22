@@ -46,4 +46,10 @@ export class HseController {
   findAllDrills(@Query() query: HseQueryDto) {
     return this.hseService.findAllDrills(query);
   }
+
+  @Get('stats')
+  @ApiOperation({ summary: 'Get HSE analytics statistics' })
+  getStats() {
+    return this.hseService.getStats();
+  }
 }
