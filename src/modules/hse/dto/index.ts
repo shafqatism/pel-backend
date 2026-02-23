@@ -21,7 +21,7 @@ export class CreateIncidentDto {
 
   @ApiProperty({ enum: ['low', 'medium', 'high', 'critical'] })
   @IsIn(['low', 'medium', 'high', 'critical'])
-  severity: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
 
   @ApiProperty()
   @IsString()
@@ -65,7 +65,7 @@ export class CreateAuditDto {
 
   @ApiProperty({ enum: ['compliant', 'non_compliant', 'improvement_needed'] })
   @IsIn(['compliant', 'non_compliant', 'improvement_needed'])
-  findings: string;
+  findings: 'compliant' | 'non_compliant' | 'improvement_needed';
 }
 
 export class CreateDrillDto {

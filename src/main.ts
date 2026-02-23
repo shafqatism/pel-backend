@@ -21,13 +21,13 @@ async function bootstrap() {
   app.setGlobalPrefix('api');
 
   // ─── CORS ───
-  const allowedOrigins = [
+  const allowedOrigins: (string | RegExp)[] = [
     'http://localhost:3000',
     'http://localhost:5173',
     'https://pel-frontend.vercel.app',
     /^https:\/\/pel-frontend.*\.vercel\.app$/,
     process.env.FRONTEND_URL,
-  ].filter(Boolean);
+  ].filter((o): o is string | RegExp => !!o);
 
   app.enableCors({
     origin: allowedOrigins,
