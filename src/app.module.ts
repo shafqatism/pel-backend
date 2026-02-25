@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
-import { TypeOrmModule } from '@nestjs/typeorm';
+import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from './modules/auth/auth.module';
 import { FleetModule } from './modules/fleet/fleet.module';
 import { HrModule } from './modules/hr/hr.module';
@@ -12,24 +11,16 @@ import { DocumentsModule } from './modules/documents/documents.module';
 import { MediaModule } from './modules/media/media.module';
 import { HseModule } from './modules/hse/hse.module';
 import { SettingsModule } from './modules/settings/settings.module';
+import { PrismaModule } from './prisma/prisma.module';
+import { DropdownsModule } from './modules/dropdowns/dropdowns.module';
+import { SeederModule } from './modules/seeder/seeder.module';
+import { CompaniesModule } from './modules/companies/companies.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
-    }),
-    TypeOrmModule.forRootAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        type: 'postgres',
-        url: configService.get<string>('DATABASE_URL'),
-        autoLoadEntities: true,
-        synchronize: true, // DEV MODE: Auto-sync schema
-        ssl: { rejectUnauthorized: false },
-        logging: false,
-      }),
     }),
     AuthModule,
     FleetModule,
@@ -42,6 +33,10 @@ import { SettingsModule } from './modules/settings/settings.module';
     MediaModule,
     HseModule,
     SettingsModule,
+    DropdownsModule,
+    PrismaModule,
+    SeederModule,
+    CompaniesModule,
   ],
 })
 export class AppModule {}

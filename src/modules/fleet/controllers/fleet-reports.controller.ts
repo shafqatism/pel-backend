@@ -1,9 +1,12 @@
-import { Controller, Get, Param, Res, Query } from '@nestjs/common';
+import { Controller, Get, Param, Res, Query, UseGuards } from '@nestjs/common';
 import { FastifyReply } from 'fastify';
-import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiQuery, ApiBearerAuth } from '@nestjs/swagger';
 import { FleetReportsService } from '../services/fleet-reports.service';
+import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 
 @ApiTags('fleet - reports')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('fleet')
 export class FleetReportsController {
   constructor(private readonly svc: FleetReportsService) {}
@@ -30,6 +33,19 @@ export class FleetReportsController {
   @ApiOperation({ summary: 'Maintenance cost breakdown' })
   getMaintenanceCosts() {
     return this.svc.getMaintenanceCosts();
+  }
+
+  @Get('reports/summary')
+  @ApiOperation({ summary: 'Fleet summary with aggregated metrics' })
+  getFleetSummary() {
+    console.log('[FleetReportsController] GET /fleet/reports/summary');
+    return this.svc.getFleetSummary();
+  }
+
+  @Get('reports/vehicle/:id')
+  @ApiOperation({ summary: 'Full report for a specific vehicle' })
+  getVehicleReport(@Param('id') id: string) {
+    return this.svc.getVehicleFullReport(id);
   }
 
   @Get('export/:type')

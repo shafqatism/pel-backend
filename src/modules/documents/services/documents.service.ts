@@ -1,54 +1,68 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { Document } from '../entities/document.entity';
+import { PrismaService } from '../../../prisma/prisma.service';
 import { CreateDocumentDto, UpdateDocumentDto, DocumentQueryDto } from '../dto';
 import { PaginatedResponseDto } from '../../../common/dto';
+import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class DocumentsService {
-  constructor(
-    @InjectRepository(Document)
-    private readonly repo: Repository<Document>,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
-  async create(dto: CreateDocumentDto): Promise<Document> {
-    return this.repo.save(this.repo.create(dto));
+  async create(dto: CreateDocumentDto) {
+    const data: Prisma.DocumentCreateInput = {
+      ...dto,
+      fileSize: dto.fileSize ? Number(dto.fileSize) : null,
+    };
+    return this.prisma.document.create({ data });
   }
 
-  async findAll(query: DocumentQueryDto): Promise<PaginatedResponseDto<Document>> {
-    const { page = 1, limit = 20, search, sortBy = 'createdAt', sortOrder = 'DESC', category, department, site } = query;
-    const qb = this.repo.createQueryBuilder('d');
+  async findAll(query: DocumentQueryDto) {
+    const { page = 1, limit = 20, search, sortBy = 'createdAt', sortOrder = 'desc', category, department, site } = query;
+    const where: Prisma.DocumentWhereInput = {};
 
     if (search) {
-      qb.andWhere('(d.title ILIKE :s OR d.description ILIKE :s)', { s: `%${search}%` });
+      where.OR = [
+        { title: { contains: search, mode: 'insensitive' } },
+        { description: { contains: search, mode: 'insensitive' } },
+      ];
     }
-    if (category) qb.andWhere('d.category = :category', { category });
-    if (department) qb.andWhere('d.department = :department', { department });
-    if (site) qb.andWhere('d.site ILIKE :site', { site: `%${site}%` });
+    if (category) where.category = category;
+    if (department) where.department = department;
+    if (site) where.site = { contains: site, mode: 'insensitive' };
 
-    qb.orderBy(`d.${sortBy}`, sortOrder);
-    qb.skip((page - 1) * limit).take(limit);
+    const [data, total] = await Promise.all([
+      this.prisma.document.findMany({
+        where,
+        take: limit,
+        skip: (page - 1) * limit,
+        orderBy: { [sortBy]: sortOrder.toLowerCase() as any },
+      }),
+      this.prisma.document.count({ where }),
+    ]);
 
-    const [data, total] = await qb.getManyAndCount();
-    return new PaginatedResponseDto(data, total, page, limit);
+    return new PaginatedResponseDto(data as any, total, page, limit);
   }
 
-  async findOne(id: string): Promise<Document> {
-    const d = await this.repo.findOne({ where: { id } });
+  async findOne(id: string) {
+    const d = await this.prisma.document.findUnique({ where: { id } });
     if (!d) throw new NotFoundException(`Document "${id}" not found`);
     return d;
   }
 
-  async update(id: string, dto: UpdateDocumentDto): Promise<Document> {
-    const doc = await this.findOne(id);
-    Object.assign(doc, dto);
-    return this.repo.save(doc);
+  async update(id: string, dto: UpdateDocumentDto) {
+    await this.findOne(id);
+    const data: Prisma.DocumentUpdateInput = { ...dto };
+    if (dto.fileSize !== undefined) data.fileSize = dto.fileSize ? Number(dto.fileSize) : null;
+    
+    return this.prisma.document.update({
+      where: { id },
+      data,
+    });
   }
 
   async remove(id: string) {
-    const doc = await this.findOne(id);
-    await this.repo.remove(doc);
+    await this.findOne(id);
+    await this.prisma.document.delete({ where: { id } });
     return { message: 'Document deleted' };
   }
 }

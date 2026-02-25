@@ -1,9 +1,12 @@
-import { Controller, Get, Post, Body, Query } from '@nestjs/common';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { Controller, Get, Post, Patch, Delete, Body, Query, Param, ParseUUIDPipe, UseGuards } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { FuelService } from '../services/fuel.service';
-import { CreateFuelLogDto, FuelQueryDto } from '../dto';
+import { CreateFuelLogDto, UpdateFuelLogDto, FuelQueryDto } from '../dto';
+import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 
 @ApiTags('fleet - fuel')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('fleet/fuel')
 export class FuelController {
   constructor(private readonly svc: FuelService) {}
@@ -16,4 +19,13 @@ export class FuelController {
 
   @Get('stats') @ApiOperation({ summary: 'Fuel consumption statistics' })
   getStats() { return this.svc.getStats(); }
+
+  @Get(':id') @ApiOperation({ summary: 'Get fuel log details' })
+  findOne(@Param('id', ParseUUIDPipe) id: string) { return this.svc.findOne(id); }
+
+  @Patch(':id') @ApiOperation({ summary: 'Update fuel log' })
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateFuelLogDto) { return this.svc.update(id, dto); }
+
+  @Delete(':id') @ApiOperation({ summary: 'Delete fuel log' })
+  remove(@Param('id', ParseUUIDPipe) id: string) { return this.svc.remove(id); }
 }

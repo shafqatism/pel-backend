@@ -1,0 +1,373 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  fullName  String?
+  role      String   @default("admin")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
+
+model Settings {
+  id                    String   @id @default(uuid())
+  companyName           String   @default("Petroleum Exploration Limited")
+  currency              String   @default("PKR")
+  unitSystem            String   @default("metric")
+  maintenanceIntervalKm Int      @default(5000)
+  systemEmail           String   @default("admin@pelexploration.com.pk")
+  brandingColors        Json?
+  enableNotifications   Boolean  @default(true)
+  
+  // Cloudflare R2 Config
+  r2AccountId           String?
+  r2AccessKeyId         String?
+  r2SecretAccessKey     String?
+  r2BucketName          String?
+  r2PublicCustomDomain  String?
+
+  customPresets         Json?
+
+  updatedAt             DateTime @updatedAt
+
+  @@map("settings")
+}
+
+model DropdownOption {
+  id        String   @id @default(uuid())
+  category  String   // e.g. "fuel_payment_method", "maintenance_type"
+  label     String
+  value     String
+  createdAt DateTime @default(now())
+
+  @@unique([category, value])
+  @@map("dropdown_options")
+}
+
+model Vehicle {
+  id                      String   @id @default(uuid())
+  registrationNumber      String   @unique
+  vehicleName             String
+  make                    String?
+  model                   String?
+  year                    Int?
+  color                   String?
+  chassisNumber           String?
+  engineNumber            String?
+  type                    String   @default("sedan")
+  fuelType                String   @default("petrol")
+  ownershipStatus         String   @default("company_owned")
+  status                  String   @default("active")
+  assignedSite            String?
+  assignedDepartment      String?
+  currentDriverName       String?
+  currentOdometerKm       Decimal  @default(0) @db.Decimal(12, 2)
+  maintenanceIntervalKm   Int      @default(5000)
+  maintenanceIntervalDays Int      @default(180)
+  insuranceExpiry         DateTime? @db.Date
+  registrationExpiry      DateTime? @db.Date
+  fitnessExpiry           DateTime? @db.Date
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  trips               Trip[]
+  fuelLogs            FuelLog[]
+  maintenanceRecords  MaintenanceRecord[]
+  assignments         VehicleAssignment[]
+
+  @@map("vehicles")
+}
+
+model Trip {
+  id                 String   @id @default(uuid())
+  vehicleId          String
+  vehicle            Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  destination        String
+  purposeOfVisit     String?
+  tripDate           DateTime @db.Date
+  meterOut           Decimal  @db.Decimal(12, 2)
+  meterIn            Decimal? @db.Decimal(12, 2)
+  totalKm            Decimal? @db.Decimal(12, 2)
+  timeOut            DateTime? @db.Timestamp
+  timeIn             DateTime? @db.Timestamp
+  driverName         String?
+  alternativeDriverName String?
+  personTravelList   String[] 
+  fuelAllottedLiters Decimal  @default(0) @db.Decimal(12, 2)
+  fuelCostPkr        Decimal  @default(0) @db.Decimal(12, 2)
+  status             String   @default("in_progress")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@map("trips")
+}
+
+model FuelLog {
+  id              String   @id @default(uuid())
+  vehicleId       String
+  vehicle         Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  date            DateTime @db.Date
+  quantityLiters  Decimal  @db.Decimal(10, 2)
+  ratePerLiter    Decimal  @db.Decimal(10, 2)
+  totalCost       Decimal  @db.Decimal(12, 2)
+  odometerReading Decimal  @db.Decimal(12, 2)
+  stationName     String?
+  paymentMethod   String   @default("cash")
+  receiptUrl      String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("fuel_logs")
+}
+
+model MaintenanceRecord {
+  id                      String   @id @default(uuid())
+  vehicleId               String
+  vehicle                 Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  type                    String   @default("routine_check")
+  description             String?
+  maintenanceDate         DateTime @db.Date
+  costPkr                 Decimal  @db.Decimal(12, 2)
+  shopOrPerson            String?
+  odometerAtMaintenanceKm Decimal  @default(0) @db.Decimal(12, 2)
+  nextServiceOdometerKm   Decimal? @db.Decimal(12, 2)
+  nextServiceDueDate      DateTime? @db.Date
+  maintenanceBy           String   @default("internal")
+  documentUrls            String[]
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  @@map("maintenance_records")
+}
+
+model VehicleAssignment {
+  id             String   @id @default(uuid())
+  vehicleId      String
+  vehicle        Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  assignedTo     String
+  assignedBy     String
+  assignmentDate DateTime @db.Date
+  returnDate     DateTime? @db.Date
+  purpose        String?
+  status         String   @default("active")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@map("vehicle_assignments")
+}
+
+model Employee {
+  id                  String   @id @default(uuid())
+  fullName            String
+  fatherName          String?
+  cnic                String?  @unique
+  phone               String?
+  email               String?
+  address             String?
+  designation         String
+  department          String
+  joiningDate         DateTime? @db.Date
+  status              String   @default("active")
+  basicSalary         Decimal  @default(0) @db.Decimal(12, 2)
+  bankAccountNumber   String?
+  bankName            String?
+  profilePhotoUrl     String?
+  emergencyContactName String?
+  emergencyContactPhone String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  attendanceRecords   Attendance[]
+
+  @@map("employees")
+}
+
+model Attendance {
+  id         String   @id @default(uuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  date       DateTime @db.Date
+  checkIn    DateTime? @db.Timestamp
+  checkOut   DateTime? @db.Timestamp
+  status     String   @default("present")
+  notes      String?
+  site       String?
+  createdAt  DateTime @default(now())
+
+  @@map("attendance")
+}
+
+model Expense {
+  id           String   @id @default(uuid())
+  title        String
+  description  String?
+  category     String
+  amount       Decimal  @db.Decimal(14, 2)
+  dateIncurred DateTime @db.Date
+  status       String   @default("pending")
+  approvedBy   String?
+  remarks      String?
+  receiptUrl   String?
+  site         String?
+  department   String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("expenses")
+}
+
+model Incident {
+  id               String   @id @default(uuid())
+  title            String
+  description      String
+  incidentDate     DateTime @db.Date
+  location         String
+  severity         String   @default("low")
+  reportedBy       String
+  status           String   @default("open")
+  correctiveAction String?
+  site             String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@map("hse_incidents")
+}
+
+model SafetyAudit {
+  id           String   @id @default(uuid())
+  auditTitle   String
+  auditDate    DateTime @db.Date
+  auditorName  String
+  site         String?
+  score        Int      @default(0)
+  observations String?
+  findings     String   @default("compliant")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("hse_audits")
+}
+
+model HseDrill {
+  id                String   @id @default(uuid())
+  drillType         String
+  drillDate         DateTime @db.Date
+  location          String
+  participantsCount Int      @default(0)
+  durationMinutes   Int?
+  outcome           String?
+  supervisor        String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@map("hse_drills")
+}
+
+model ProjectSite {
+  id           String    @id @default(uuid())
+  siteName     String
+  location     String?
+  district     String?
+  province     String?
+  coordinates  String?
+  phase        String    @default("exploration")
+  status       String    @default("active")
+  siteInCharge String?
+  contactPhone String?
+  startDate    DateTime? @db.Date
+  description  String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@map("project_sites")
+}
+
+model Document {
+  id          String   @id @default(uuid())
+  title       String
+  description String?
+  category    String
+  fileUrl     String
+  fileType    String?
+  fileSize    Int?
+  uploadedBy  String?
+  department  String?
+  site        String?
+  tags        String[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("documents")
+}
+
+model FoodMess {
+  id          String   @id @default(uuid())
+  date        DateTime @db.Date
+  mealType    String
+  headCount   Int      @default(0)
+  menuItems   String?
+  costPerHead Decimal  @default(0) @db.Decimal(10, 2)
+  totalCost   Decimal  @default(0) @db.Decimal(12, 2)
+  site        String?
+  rating      Decimal? @db.Decimal(3, 2)
+  remarks     String?
+  preparedBy  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("food_mess")
+}
+
+model LandRental {
+  id              String    @id @default(uuid())
+  landOwnerName   String
+  landOwnerCnic   String?
+  landOwnerPhone  String?
+  location        String
+  district        String?
+  province        String?
+  areaAcres       Decimal?  @db.Decimal(10, 2)
+  monthlyRent     Decimal   @db.Decimal(12, 2)
+  leaseStartDate  DateTime  @db.Date
+  leaseEndDate    DateTime? @db.Date
+  status          String    @default("active")
+  purpose         String?
+  agreementDocUrl String?
+  site            String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@map("land_rentals")
+}
+
+model Company {
+  id                String   @id @default(uuid())
+  name              String
+  registrationNumber String?  @unique
+  taxId             String?  @unique // NTN / STRN
+  email             String?
+  phone             String?
+  address           String?
+  city              String?
+  country           String?  @default("Pakistan")
+  website           String?
+  contactPerson     String?
+  industry          String?  @default("Energy")
+  category          String   @default("vendor") // vendor, client, partner
+  status            String   @default("active")
+  logoUrl           String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@map("companies")
+}

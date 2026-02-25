@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Query, UseGuards, Patch, Param, Delete } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { HseService } from '../services/hse.service';
 import { CreateIncidentDto, CreateAuditDto, CreateDrillDto, HseQueryDto } from '../dto';
@@ -23,6 +23,18 @@ export class HseController {
     return this.hseService.findAllIncidents(query);
   }
 
+  @Patch('incidents/:id')
+  @ApiOperation({ summary: 'Update a safety incident' })
+  updateIncident(@Param('id') id: string, @Body() dto: Partial<CreateIncidentDto>) {
+    return this.hseService.updateIncident(id, dto);
+  }
+
+  @Delete('incidents/:id')
+  @ApiOperation({ summary: 'Delete a safety incident' })
+  removeIncident(@Param('id') id: string) {
+    return this.hseService.removeIncident(id);
+  }
+
   @Post('audits')
   @ApiOperation({ summary: 'Log a safety audit' })
   createAudit(@Body() dto: CreateAuditDto) {
@@ -35,6 +47,18 @@ export class HseController {
     return this.hseService.findAllAudits(query);
   }
 
+  @Patch('audits/:id')
+  @ApiOperation({ summary: 'Update a safety audit' })
+  updateAudit(@Param('id') id: string, @Body() dto: Partial<CreateAuditDto>) {
+    return this.hseService.updateAudit(id, dto);
+  }
+
+  @Delete('audits/:id')
+  @ApiOperation({ summary: 'Delete a safety audit' })
+  removeAudit(@Param('id') id: string) {
+    return this.hseService.removeAudit(id);
+  }
+
   @Post('drills')
   @ApiOperation({ summary: 'Log an HSE drill' })
   createDrill(@Body() dto: CreateDrillDto) {
@@ -45,6 +69,18 @@ export class HseController {
   @ApiOperation({ summary: 'List HSE drills' })
   findAllDrills(@Query() query: HseQueryDto) {
     return this.hseService.findAllDrills(query);
+  }
+
+  @Patch('drills/:id')
+  @ApiOperation({ summary: 'Update an HSE drill' })
+  updateDrill(@Param('id') id: string, @Body() dto: Partial<CreateDrillDto>) {
+    return this.hseService.updateDrill(id, dto);
+  }
+
+  @Delete('drills/:id')
+  @ApiOperation({ summary: 'Delete an HSE drill' })
+  removeDrill(@Param('id') id: string) {
+    return this.hseService.removeDrill(id);
   }
 
   @Get('stats')

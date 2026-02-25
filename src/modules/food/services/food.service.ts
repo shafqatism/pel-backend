@@ -1,77 +1,142 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { FoodMess } from '../entities/food-mess.entity';
+import { PrismaService } from '../../../prisma/prisma.service';
 import { CreateFoodMessDto, UpdateFoodMessDto, FoodMessQueryDto } from '../dto';
 import { PaginatedResponseDto } from '../../../common/dto';
+import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class FoodService {
-  constructor(
-    @InjectRepository(FoodMess)
-    private readonly repo: Repository<FoodMess>,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
-  async create(dto: CreateFoodMessDto): Promise<FoodMess> {
-    const entry = this.repo.create(dto);
-    if (!entry.totalCost && entry.headCount && entry.costPerHead) {
-      entry.totalCost = entry.headCount * entry.costPerHead;
-    }
-    return this.repo.save(entry);
-  }
-
-  async findAll(query: FoodMessQueryDto): Promise<PaginatedResponseDto<FoodMess>> {
-    const { page = 1, limit = 20, search, sortBy = 'date', sortOrder = 'DESC', mealType, date, site } = query;
-    const qb = this.repo.createQueryBuilder('f');
-
-    if (search) {
-      qb.andWhere('(f.menuItems ILIKE :s OR f.remarks ILIKE :s)', { s: `%${search}%` });
-    }
-    if (mealType) qb.andWhere('f.mealType = :mealType', { mealType });
-    if (date) qb.andWhere('f.date = :date', { date });
-    if (site) qb.andWhere('f.site ILIKE :site', { site: `%${site}%` });
-
-    qb.orderBy(`f.${sortBy}`, sortOrder);
-    qb.skip((page - 1) * limit).take(limit);
-
-    const [data, total] = await qb.getManyAndCount();
-    return new PaginatedResponseDto(data, total, page, limit);
-  }
-
-  async getStats() {
-    const today = new Date().toISOString().split('T')[0];
-    const mealsToday = await this.repo.find({ where: { date: today as any } });
+  async create(dto: CreateFoodMessDto) {
+    const data: Prisma.FoodMessCreateInput = {
+      ...dto,
+      date: new Date(dto.date),
+      costPerHead: Number(dto.costPerHead),
+      totalCost: dto.totalCost ? Number(dto.totalCost) : (Number(dto.headCount) * Number(dto.costPerHead)),
+      rating: dto.rating ? Number(dto.rating) : null,
+    };
+    const foodMess = await this.prisma.foodMess.create({ data });
     
-    const all = await this.repo.find();
-    const totalCost = all.reduce((sum, f) => sum + Number(f.totalCost), 0);
-    const avgRating = all.filter(f => f.rating).reduce((sum, f, _, arr) => sum + Number(f.rating) / arr.length, 0);
-
+    // Convert Decimal to number for response
     return {
-      mealsToday: mealsToday.reduce((sum, f) => sum + f.headCount, 0),
-      avgRating: Math.round(avgRating * 10) / 10,
-      todayCost: mealsToday.reduce((sum, f) => sum + Number(f.totalCost), 0),
-      monthlyCost: totalCost, // Simplification
+      ...foodMess,
+      costPerHead: Number(foodMess.costPerHead),
+      totalCost: Number(foodMess.totalCost),
+      rating: foodMess.rating ? Number(foodMess.rating) : null,
     };
   }
 
-  async findOne(id: string): Promise<FoodMess> {
-    const f = await this.repo.findOne({ where: { id } });
-    if (!f) throw new NotFoundException(`Meal entry "${id}" not found`);
-    return f;
+  async findAll(query: FoodMessQueryDto) {
+    const { page = 1, limit = 20, search, sortBy = 'date', sortOrder = 'desc', mealType, date, site } = query;
+    const where: Prisma.FoodMessWhereInput = {};
+
+    if (search) {
+      where.OR = [
+        { menuItems: { contains: search, mode: 'insensitive' } },
+        { remarks: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+    if (mealType) where.mealType = mealType;
+    if (date) where.date = new Date(date);
+    if (site) where.site = { contains: site, mode: 'insensitive' };
+
+    const [data, total] = await Promise.all([
+      this.prisma.foodMess.findMany({
+        where,
+        take: limit,
+        skip: (page - 1) * limit,
+        orderBy: { [sortBy]: sortOrder.toLowerCase() as any },
+      }),
+      this.prisma.foodMess.count({ where }),
+    ]);
+
+    // Convert Decimal to number for JSON serialization
+    const convertedData = data.map(foodMess => ({
+      ...foodMess,
+      costPerHead: Number(foodMess.costPerHead),
+      totalCost: Number(foodMess.totalCost),
+      rating: foodMess.rating ? Number(foodMess.rating) : null,
+    }));
+
+    return new PaginatedResponseDto(convertedData as any, total, page, limit);
   }
 
-  async update(id: string, dto: UpdateFoodMessDto): Promise<FoodMess> {
+  async getStats() {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const [todayCount, todayCostSum, ratings, totalCostSum] = await Promise.all([
+      this.prisma.foodMess.aggregate({
+        where: { date: today },
+        _sum: { headCount: true, totalCost: true },
+      }),
+      this.prisma.foodMess.aggregate({
+        where: { date: today },
+        _sum: { totalCost: true },
+      }),
+      this.prisma.foodMess.aggregate({
+        where: { NOT: { rating: null } },
+        _avg: { rating: true },
+      }),
+      this.prisma.foodMess.aggregate({
+        _sum: { totalCost: true },
+      }),
+    ]);
+
+    return {
+      mealsToday: todayCount._sum.headCount || 0,
+      avgRating: Math.round((Number(ratings._avg.rating) || 0) * 10) / 10,
+      todayCost: Number(todayCount._sum.totalCost || 0),
+      monthlyCost: Number(totalCostSum._sum.totalCost || 0),
+    };
+  }
+
+  async findOne(id: string) {
+    const f = await this.prisma.foodMess.findUnique({ where: { id } });
+    if (!f) throw new NotFoundException(`Meal entry "${id}" not found`);
+    
+    // Convert Decimal to number for response
+    return {
+      ...f,
+      costPerHead: Number(f.costPerHead),
+      totalCost: Number(f.totalCost),
+      rating: f.rating ? Number(f.rating) : null,
+    };
+  }
+
+  async update(id: string, dto: UpdateFoodMessDto) {
     const f = await this.findOne(id);
-    Object.assign(f, dto);
-    if (!dto.totalCost && f.headCount && f.costPerHead) {
-      f.totalCost = f.headCount * f.costPerHead;
+    const data: Prisma.FoodMessUpdateInput = { ...dto };
+    
+    if (dto.costPerHead !== undefined) data.costPerHead = Number(dto.costPerHead);
+    if (dto.totalCost !== undefined) data.totalCost = Number(dto.totalCost);
+    if (dto.rating !== undefined) data.rating = dto.rating ? Number(dto.rating) : null;
+    
+    // Recalculate totalCost if headCount or costPerHead changed
+    if (dto.headCount !== undefined || dto.costPerHead !== undefined) {
+      const headCount = dto.headCount ?? f.headCount;
+      const costPerHead = dto.costPerHead ?? Number(f.costPerHead);
+      data.totalCost = headCount * costPerHead;
     }
-    return this.repo.save(f);
+
+    const foodMess = await this.prisma.foodMess.update({
+      where: { id },
+      data,
+    });
+    
+    // Convert Decimal to number for response
+    return {
+      ...foodMess,
+      costPerHead: Number(foodMess.costPerHead),
+      totalCost: Number(foodMess.totalCost),
+      rating: foodMess.rating ? Number(foodMess.rating) : null,
+    };
   }
 
   async remove(id: string) {
-    const f = await this.findOne(id);
-    await this.repo.remove(f);
+    await this.findOne(id);
+    await this.prisma.foodMess.delete({ where: { id } });
     return { message: 'Meal entry deleted' };
   }
 }

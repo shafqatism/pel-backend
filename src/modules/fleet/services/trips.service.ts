@@ -1,57 +1,94 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { Trip } from '../entities';
+import { PrismaService } from '../../../prisma/prisma.service';
 import { CreateTripDto, UpdateTripDto, TripQueryDto } from '../dto';
 import { PaginatedResponseDto } from '../../../common/dto';
+import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class TripsService {
-  constructor(
-    @InjectRepository(Trip)
-    private readonly repo: Repository<Trip>,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
-  async create(dto: CreateTripDto): Promise<Trip> {
-    const trip = this.repo.create(dto);
-    return this.repo.save(trip);
+  async create(dto: CreateTripDto) {
+    const data = {
+      ...dto,
+      tripDate: new Date(dto.tripDate),
+      timeOut: dto.timeOut ? new Date(dto.timeOut) : null,
+      timeIn: dto.timeIn ? new Date(dto.timeIn) : null,
+      meterOut: Number(dto.meterOut),
+      meterIn: dto.meterIn ? Number(dto.meterIn) : null,
+      fuelAllottedLiters: dto.fuelAllottedLiters ? Number(dto.fuelAllottedLiters) : 0,
+      fuelCostPkr: dto.fuelCostPkr ? Number(dto.fuelCostPkr) : 0,
+    };
+    return this.prisma.trip.create({ data });
   }
 
-  async findAll(query: TripQueryDto): Promise<PaginatedResponseDto<Trip>> {
-    const { page = 1, limit = 20, search, sortBy = 'createdAt', sortOrder = 'DESC', vehicleId, status } = query;
-    const qb = this.repo.createQueryBuilder('t').leftJoinAndSelect('t.vehicle', 'vehicle');
+  async findAll(query: TripQueryDto) {
+    const { page = 1, limit = 20, search, sortBy = 'createdAt', sortOrder = 'desc', vehicleId, status } = query;
+    const where: Prisma.TripWhereInput = {};
 
     if (search) {
-      qb.andWhere('(t.destination ILIKE :s OR t.driverName ILIKE :s OR t.purposeOfVisit ILIKE :s)', { s: `%${search}%` });
+      where.OR = [
+        { destination: { contains: search, mode: 'insensitive' } },
+        { driverName: { contains: search, mode: 'insensitive' } },
+        { purposeOfVisit: { contains: search, mode: 'insensitive' } },
+      ];
     }
-    if (vehicleId) qb.andWhere('t.vehicleId = :vehicleId', { vehicleId });
-    if (status) qb.andWhere('t.status = :status', { status });
+    if (vehicleId) where.vehicleId = vehicleId;
+    if (status) where.status = status;
 
-    qb.orderBy(`t.${sortBy === 'createdAt' ? 'createdAt' : sortBy}`, sortOrder);
-    qb.skip((page - 1) * limit).take(limit);
+    const [data, total] = await Promise.all([
+      this.prisma.trip.findMany({
+        where,
+        take: limit,
+        skip: (page - 1) * limit,
+        include: { vehicle: true },
+        orderBy: { [sortBy]: sortOrder.toLowerCase() },
+      }),
+      this.prisma.trip.count({ where }),
+    ]);
 
-    const [data, total] = await qb.getManyAndCount();
-    return new PaginatedResponseDto(data, total, page, limit);
+    return new PaginatedResponseDto(data as any, total, page, limit);
   }
 
-  async findOne(id: string): Promise<Trip> {
-    const t = await this.repo.findOne({ where: { id }, relations: ['vehicle'] });
+  async findOne(id: string) {
+    const t = await this.prisma.trip.findUnique({ where: { id }, include: { vehicle: true } });
     if (!t) throw new NotFoundException(`Trip "${id}" not found`);
     return t;
   }
 
-  async update(id: string, dto: UpdateTripDto): Promise<Trip> {
+  async update(id: string, dto: UpdateTripDto) {
     const trip = await this.findOne(id);
-    if (dto.meterIn && trip.meterOut) {
-      (trip as any).totalKm = Number(dto.meterIn) - Number(trip.meterOut);
+    const updateData: any = { ...dto };
+    
+    // Clean up empty strings to null for optional fields
+    const optionalFields = ['purposeOfVisit', 'driverName', 'alternativeDriverName'];
+    optionalFields.forEach(field => {
+      if (updateData[field] === '') updateData[field] = null;
+    });
+
+    if (dto.tripDate) updateData.tripDate = new Date(dto.tripDate);
+    if (dto.timeOut) updateData.timeOut = new Date(dto.timeOut);
+    if (dto.timeIn) updateData.timeIn = new Date(dto.timeIn);
+    
+    if (dto.meterIn !== undefined) {
+      updateData.meterIn = dto.meterIn === null ? null : Number(dto.meterIn);
+      if (updateData.meterIn !== null && trip.meterOut) {
+        updateData.totalKm = Number(updateData.meterIn) - Number(trip.meterOut);
+      }
     }
-    Object.assign(trip, dto);
-    return this.repo.save(trip);
+    if (dto.meterOut !== undefined) updateData.meterOut = Number(dto.meterOut);
+    if (dto.fuelAllottedLiters !== undefined) updateData.fuelAllottedLiters = Number(dto.fuelAllottedLiters);
+    if (dto.fuelCostPkr !== undefined) updateData.fuelCostPkr = Number(dto.fuelCostPkr);
+
+    return this.prisma.trip.update({
+      where: { id },
+      data: updateData,
+    });
   }
 
   async remove(id: string) {
-    const t = await this.findOne(id);
-    await this.repo.remove(t);
+    await this.findOne(id);
+    await this.prisma.trip.delete({ where: { id } });
     return { message: 'Trip deleted' };
   }
 }

@@ -1,47 +1,85 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { VehicleAssignment } from '../entities';
+import { PrismaService } from '../../../prisma/prisma.service';
 import { CreateAssignmentDto, UpdateAssignmentDto } from '../dto';
 import { PaginatedResponseDto, PaginationQueryDto } from '../../../common/dto';
+import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class AssignmentsService {
-  constructor(
-    @InjectRepository(VehicleAssignment)
-    private readonly repo: Repository<VehicleAssignment>,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
-  async create(dto: CreateAssignmentDto): Promise<VehicleAssignment> {
-    return this.repo.save(this.repo.create(dto));
+  async create(dto: CreateAssignmentDto) {
+    const data = {
+      ...dto,
+      assignmentDate: new Date(dto.assignmentDate),
+      returnDate: dto.returnDate ? new Date(dto.returnDate) : null,
+    };
+    return this.prisma.vehicleAssignment.create({ data });
   }
 
-  async findAll(query: PaginationQueryDto): Promise<PaginatedResponseDto<VehicleAssignment>> {
-    const { page = 1, limit = 20, search, sortOrder = 'DESC' } = query;
-    const qb = this.repo.createQueryBuilder('a').leftJoinAndSelect('a.vehicle', 'vehicle');
+  async findAll(query: PaginationQueryDto) {
+    const { page = 1, limit = 20, search, sortOrder = 'desc' } = query;
+    const where: Prisma.VehicleAssignmentWhereInput = {};
 
     if (search) {
-      qb.andWhere('(a.assignedTo ILIKE :s OR a.assignedBy ILIKE :s OR a.purpose ILIKE :s)', { s: `%${search}%` });
+      where.OR = [
+        { assignedTo: { contains: search, mode: 'insensitive' } },
+        { assignedBy: { contains: search, mode: 'insensitive' } },
+        { purpose: { contains: search, mode: 'insensitive' } },
+      ];
     }
 
-    qb.orderBy('a.createdAt', sortOrder);
-    qb.skip((page - 1) * limit).take(limit);
+    const [data, total] = await Promise.all([
+      this.prisma.vehicleAssignment.findMany({
+        where,
+        take: limit,
+        skip: (page - 1) * limit,
+        include: { vehicle: true },
+        orderBy: { createdAt: sortOrder.toLowerCase() as any },
+      }),
+      this.prisma.vehicleAssignment.count({ where }),
+    ]);
 
-    const [data, total] = await qb.getManyAndCount();
-    return new PaginatedResponseDto(data, total, page, limit);
+    return new PaginatedResponseDto(data as any, total, page, limit);
   }
 
-  async update(id: string, dto: UpdateAssignmentDto): Promise<VehicleAssignment> {
-    const a = await this.repo.findOne({ where: { id } });
-    if (!a) throw new NotFoundException(`Assignment "${id}" not found`);
-    Object.assign(a, dto);
-    return this.repo.save(a);
+  async findOne(id: string) {
+    const assignment = await this.prisma.vehicleAssignment.findUnique({
+      where: { id },
+      include: { vehicle: true },
+    });
+    if (!assignment) throw new NotFoundException(`Assignment "${id}" not found`);
+    return assignment;
+  }
+
+  async update(id: string, dto: UpdateAssignmentDto) {
+    try {
+      const data: any = { ...dto };
+      
+      // Clean up empty strings to null for optional fields
+      const optionalFields = ['purpose', 'assignedTo', 'assignedBy'];
+      optionalFields.forEach(field => {
+        if (data[field] === '') data[field] = null;
+      });
+
+      if (dto.assignmentDate) data.assignmentDate = new Date(dto.assignmentDate);
+      if (dto.returnDate) data.returnDate = new Date(dto.returnDate);
+      
+      return await this.prisma.vehicleAssignment.update({
+        where: { id },
+        data,
+      });
+    } catch (e) {
+      throw new NotFoundException(`Assignment "${id}" not found`);
+    }
   }
 
   async remove(id: string) {
-    const a = await this.repo.findOne({ where: { id } });
-    if (!a) throw new NotFoundException(`Assignment "${id}" not found`);
-    await this.repo.remove(a);
-    return { message: 'Assignment deleted' };
+    try {
+      await this.prisma.vehicleAssignment.delete({ where: { id } });
+      return { message: 'Assignment deleted' };
+    } catch (e) {
+      throw new NotFoundException(`Assignment "${id}" not found`);
+    }
   }
 }

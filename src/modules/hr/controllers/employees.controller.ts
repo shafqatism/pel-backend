@@ -21,6 +21,9 @@ export class EmployeesController {
   @Get('stats') @ApiOperation({ summary: 'Employee statistics' })
   getStats() { return this.svc.getStats(); }
 
+  @Get('dropdown') @ApiOperation({ summary: 'Active employees for dropdowns' })
+  getDropdownList() { return this.svc.getDropdownList(); }
+
   @Get(':id') @ApiOperation({ summary: 'Get employee details' })
   findOne(@Param('id', ParseUUIDPipe) id: string) { return this.svc.findOne(id); }
 

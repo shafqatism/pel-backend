@@ -1,9 +1,12 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query, ParseUUIDPipe } from '@nestjs/common';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { Controller, Get, Post, Patch, Delete, Param, Body, Query, ParseUUIDPipe, UseGuards } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { MaintenanceService } from '../services/maintenance.service';
 import { CreateMaintenanceDto, UpdateMaintenanceDto, MaintenanceQueryDto } from '../dto';
+import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 
 @ApiTags('fleet - maintenance')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('fleet/maintenance')
 export class MaintenanceController {
   constructor(private readonly svc: MaintenanceService) {}

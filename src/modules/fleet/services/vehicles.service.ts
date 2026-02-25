@@ -3,22 +3,18 @@ import {
   NotFoundException,
   ConflictException,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { Vehicle } from '../entities';
+import { PrismaService } from '../../../prisma/prisma.service';
 import { CreateVehicleDto, UpdateVehicleDto, VehicleQueryDto } from '../dto';
 import { PaginatedResponseDto } from '../../../common/dto';
+import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class VehiclesService {
-  constructor(
-    @InjectRepository(Vehicle)
-    private readonly repo: Repository<Vehicle>,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   // ─── CREATE ───
-  async create(dto: CreateVehicleDto): Promise<Vehicle> {
-    const existing = await this.repo.findOne({
+  async create(dto: CreateVehicleDto) {
+    const existing = await this.prisma.vehicle.findUnique({
       where: { registrationNumber: dto.registrationNumber },
     });
     if (existing) {
@@ -26,19 +22,30 @@ export class VehiclesService {
         `Vehicle "${dto.registrationNumber}" already exists`,
       );
     }
-    return this.repo.save(this.repo.create(dto));
+    const data = {
+      ...dto,
+      currentOdometerKm: Number(dto.currentOdometerKm),
+      maintenanceIntervalKm: dto.maintenanceIntervalKm ? Number(dto.maintenanceIntervalKm) : 5000,
+      maintenanceIntervalDays: dto.maintenanceIntervalDays ? Number(dto.maintenanceIntervalDays) : 180,
+      year: dto.year ? Number(dto.year) : null,
+    };
+    const vehicle = await this.prisma.vehicle.create({ data });
+    
+    // Convert Decimal to number for response
+    return {
+      ...vehicle,
+      currentOdometerKm: Number(vehicle.currentOdometerKm),
+    };
   }
 
   // ─── FIND ALL ───
-  async findAll(
-    query: VehicleQueryDto,
-  ): Promise<PaginatedResponseDto<Vehicle>> {
+  async findAll(query: VehicleQueryDto) {
     const {
       page = 1,
       limit = 20,
       search,
       sortBy = 'createdAt',
-      sortOrder = 'DESC',
+      sortOrder = 'desc',
       type,
       fuelType,
       ownershipStatus,
@@ -46,24 +53,22 @@ export class VehiclesService {
       assignedSite,
     } = query;
 
-    const qb = this.repo.createQueryBuilder('v');
-
+    const where: Prisma.VehicleWhereInput = {};
     if (search) {
-      qb.andWhere(
-        '(v.registrationNumber ILIKE :s OR v.vehicleName ILIKE :s OR v.make ILIKE :s OR v.model ILIKE :s OR v.chassisNumber ILIKE :s)',
-        { s: `%${search}%` },
-      );
+      where.OR = [
+        { registrationNumber: { contains: search, mode: 'insensitive' } },
+        { vehicleName: { contains: search, mode: 'insensitive' } },
+        { make: { contains: search, mode: 'insensitive' } },
+        { model: { contains: search, mode: 'insensitive' } },
+        { chassisNumber: { contains: search, mode: 'insensitive' } },
+      ];
     }
 
-    if (type) qb.andWhere('v.type = :type', { type });
-    if (fuelType) qb.andWhere('v.fuelType = :fuelType', { fuelType });
-    if (ownershipStatus)
-      qb.andWhere('v.ownershipStatus = :ownershipStatus', { ownershipStatus });
-    if (status) qb.andWhere('v.status = :status', { status });
-    if (assignedSite)
-      qb.andWhere('v.assignedSite ILIKE :assignedSite', {
-        assignedSite: `%${assignedSite}%`,
-      });
+    if (type) where.type = type;
+    if (fuelType) where.fuelType = fuelType;
+    if (ownershipStatus) where.ownershipStatus = ownershipStatus;
+    if (status) where.status = status;
+    if (assignedSite) where.assignedSite = { contains: assignedSite, mode: 'insensitive' };
 
     const allowed = [
       'createdAt',
@@ -76,53 +81,75 @@ export class VehiclesService {
       'currentOdometerKm',
     ];
     const col = allowed.includes(sortBy) ? sortBy : 'createdAt';
-    qb.orderBy(`v.${col}`, sortOrder);
-    qb.skip((page - 1) * limit).take(limit);
 
-    const [data, total] = await qb.getManyAndCount();
-    return new PaginatedResponseDto(data, total, page, limit);
+    const [data, total] = await Promise.all([
+      this.prisma.vehicle.findMany({
+        where,
+        take: limit,
+        skip: (page - 1) * limit,
+        orderBy: { [col]: sortOrder.toLowerCase() },
+      }),
+      this.prisma.vehicle.count({ where }),
+    ]);
+
+    // Convert Decimal to number for JSON serialization
+    const convertedData = data.map(vehicle => ({
+      ...vehicle,
+      currentOdometerKm: Number(vehicle.currentOdometerKm),
+    }));
+
+    return new PaginatedResponseDto(convertedData as any, total, page, limit);
   }
 
   // ─── FIND ONE ───
-  async findOne(id: string): Promise<Vehicle> {
-    const v = await this.repo.findOne({
+  async findOne(id: string) {
+    const v = await this.prisma.vehicle.findUnique({
       where: { id },
-      relations: ['trips', 'maintenanceRecords', 'assignments', 'fuelLogs'],
+      include: {
+        trips: true,
+        maintenanceRecords: true,
+        assignments: true,
+        fuelLogs: true,
+      },
     });
     if (!v) throw new NotFoundException(`Vehicle "${id}" not found`);
-    return v;
+    
+    // Convert Decimal to number for JSON serialization
+    return {
+      ...v,
+      currentOdometerKm: Number(v.currentOdometerKm),
+    };
   }
 
   // ─── SUMMARY ───
   async getSummary() {
-    const vehicles = await this.repo.find();
-    const total = vehicles.length;
-    const active = vehicles.filter((v) => v.status === 'active').length;
-    const inMaintenance = vehicles.filter(
-      (v) => v.status === 'in_maintenance',
-    ).length;
-    const inactive = vehicles.filter((v) => v.status === 'inactive').length;
+    const [total, active, inMaint, inactive, types, ownerships, fuels] = await Promise.all([
+      this.prisma.vehicle.count(),
+      this.prisma.vehicle.count({ where: { status: 'active' } }),
+      this.prisma.vehicle.count({ where: { status: 'in_maintenance' } }),
+      this.prisma.vehicle.count({ where: { status: 'inactive' } }),
+      this.prisma.vehicle.groupBy({ by: ['type'], _count: { _all: true } }),
+      this.prisma.vehicle.groupBy({ by: ['ownershipStatus'], _count: { _all: true } }),
+      this.prisma.vehicle.groupBy({ by: ['fuelType'], _count: { _all: true } }),
+    ]);
 
     const byType: Record<string, number> = {};
+    types.forEach(t => byType[t.type] = t._count._all);
+
     const byOwnership: Record<string, number> = {};
+    ownerships.forEach(o => byOwnership[o.ownershipStatus] = o._count._all);
+
     const byFuel: Record<string, number> = {};
+    fuels.forEach(f => byFuel[f.fuelType] = f._count._all);
 
-    for (const v of vehicles) {
-      byType[v.type] = (byType[v.type] || 0) + 1;
-      byOwnership[v.ownershipStatus] =
-        (byOwnership[v.ownershipStatus] || 0) + 1;
-      byFuel[v.fuelType] = (byFuel[v.fuelType] || 0) + 1;
-    }
-
-    return { total, active, inMaintenance, inactive, byType, byOwnership, byFuel };
+    return { total, active, inMaintenance: inMaint, inactive, byType, byOwnership, byFuel };
   }
 
   // ─── DROPDOWN ───
   async getDropdownList() {
-    return this.repo.find({
-      select: ['id', 'registrationNumber', 'vehicleName'],
-      where: { status: 'active' },
-      order: { vehicleName: 'ASC' },
+    return this.prisma.vehicle.findMany({
+      select: { id: true, registrationNumber: true, vehicleName: true },
+      orderBy: { vehicleName: 'asc' },
     });
   }
 
@@ -132,7 +159,7 @@ export class VehiclesService {
     const thirtyDays = new Date();
     thirtyDays.setDate(today.getDate() + 30);
 
-    const vehicles = await this.repo.find({ order: { vehicleName: 'ASC' } });
+    const vehicles = await this.prisma.vehicle.findMany({ orderBy: { vehicleName: 'asc' } });
     const alerts: any[] = [];
 
     for (const v of vehicles) {
@@ -145,9 +172,7 @@ export class VehiclesService {
             type: label,
             expiryDate: date,
             status: d < today ? 'expired' : 'expiring',
-            daysRemaining: Math.ceil(
-              (d.getTime() - today.getTime()) / 86400000,
-            ),
+            daysRemaining: Math.ceil((d.getTime() - today.getTime()) / 86400000),
           });
         }
       };
@@ -169,47 +194,31 @@ export class VehiclesService {
 
   // ─── MAINTENANCE PREDICTIONS ───
   async getMaintenancePredictions() {
-    const vehicles = await this.repo.find({
-      relations: ['maintenanceRecords', 'trips'],
-      order: { vehicleName: 'ASC' },
+    const vehicles = await this.prisma.vehicle.findMany({
+      include: {
+        maintenanceRecords: { orderBy: { maintenanceDate: 'desc' }, take: 1 },
+        trips: { where: { tripDate: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } } }
+      },
+      orderBy: { vehicleName: 'asc' },
     });
 
     const predictions: any[] = [];
     const now = new Date();
 
     for (const v of vehicles) {
-      const lastMaint = v.maintenanceRecords
-        ?.sort(
-          (a, b) =>
-            new Date(b.maintenanceDate).getTime() -
-            new Date(a.maintenanceDate).getTime(),
-        )[0];
+      const lastMaint = v.maintenanceRecords[0];
 
-      // Average KM/day
-      const ago30 = new Date();
-      ago30.setDate(ago30.getDate() - 30);
-      const recent =
-        v.trips?.filter((t) => new Date(t.tripDate) >= ago30) || [];
-      const totalKm = recent.reduce(
-        (s, t) => s + Number(t.totalKm || 0),
-        0,
-      );
+      const totalKm = v.trips.reduce((s, t) => s + Number(t.totalKm || 0), 0);
       const avgKmDay = totalKm / 30 || 1;
 
       const lastOdo = Number(lastMaint?.odometerAtMaintenanceKm || 0);
-      const lastDate = lastMaint?.maintenanceDate
-        ? new Date(lastMaint.maintenanceDate)
-        : new Date(v.createdAt);
+      const lastDate = lastMaint?.maintenanceDate ? new Date(lastMaint.maintenanceDate) : new Date(v.createdAt);
 
-      // By KM
       const kmSince = Number(v.currentOdometerKm) - lastOdo;
       const kmLeft = (v.maintenanceIntervalKm || 5000) - kmSince;
       const daysByKm = Math.ceil(kmLeft / avgKmDay);
 
-      // By Time
-      const daysSince = Math.ceil(
-        (now.getTime() - lastDate.getTime()) / 86400000,
-      );
+      const daysSince = Math.ceil((now.getTime() - lastDate.getTime()) / 86400000);
       const daysByTime = (v.maintenanceIntervalDays || 180) - daysSince;
 
       const final = Math.min(daysByKm, daysByTime);
@@ -226,8 +235,7 @@ export class VehiclesService {
         avgKmPerDay: Math.round(avgKmDay * 100) / 100,
         predictedServiceDate: predDate,
         daysRemaining: final,
-        status:
-          final <= 0 ? 'overdue' : final <= 15 ? 'urgent' : 'upcoming',
+        status: final <= 0 ? 'overdue' : final <= 15 ? 'urgent' : 'upcoming',
         basis: final === daysByKm ? 'mileage' : 'time',
       });
     }
@@ -236,28 +244,52 @@ export class VehiclesService {
   }
 
   // ─── UPDATE ───
-  async update(id: string, dto: UpdateVehicleDto): Promise<Vehicle> {
-    const vehicle = await this.findOne(id);
-    if (
-      dto.registrationNumber &&
-      dto.registrationNumber !== vehicle.registrationNumber
-    ) {
-      const conflict = await this.repo.findOne({
+  async update(id: string, dto: UpdateVehicleDto) {
+    const vehicle = await this.prisma.vehicle.findUnique({ where: { id } });
+    if (!vehicle) throw new NotFoundException(`Vehicle "${id}" not found`);
+
+    if (dto.registrationNumber && dto.registrationNumber !== vehicle.registrationNumber) {
+      const conflict = await this.prisma.vehicle.findUnique({
         where: { registrationNumber: dto.registrationNumber },
       });
-      if (conflict)
-        throw new ConflictException(
-          `Vehicle "${dto.registrationNumber}" already exists`,
-        );
+      if (conflict) throw new ConflictException(`Vehicle "${dto.registrationNumber}" already exists`);
     }
-    Object.assign(vehicle, dto);
-    return this.repo.save(vehicle);
+
+    // Clean up empty strings to null for optional fields
+    const updateData: any = { ...dto };
+    const optionalFields = [
+      'make', 'model', 'color', 'chassisNumber', 'engineNumber', 
+      'assignedSite', 'assignedDepartment', 'currentDriverName',
+      'insuranceExpiry', 'registrationExpiry', 'fitnessExpiry'
+    ];
+
+    optionalFields.forEach(field => {
+      if (updateData[field] === '') {
+        updateData[field] = null;
+      }
+    });
+    
+    if (dto.currentOdometerKm !== undefined) updateData.currentOdometerKm = Number(dto.currentOdometerKm);
+    if (dto.maintenanceIntervalKm !== undefined) updateData.maintenanceIntervalKm = Number(dto.maintenanceIntervalKm);
+    if (dto.maintenanceIntervalDays !== undefined) updateData.maintenanceIntervalDays = Number(dto.maintenanceIntervalDays);
+    if (dto.year !== undefined) updateData.year = dto.year ? Number(dto.year) : null;
+
+    const updatedVehicle = await this.prisma.vehicle.update({
+      where: { id },
+      data: updateData,
+    });
+    
+    // Convert Decimal to number for response
+    return {
+      ...updatedVehicle,
+      currentOdometerKm: Number(updatedVehicle.currentOdometerKm),
+    };
   }
 
   // ─── DELETE ───
   async remove(id: string) {
     const v = await this.findOne(id);
-    await this.repo.remove(v);
+    await this.prisma.vehicle.delete({ where: { id } });
     return { message: `Vehicle "${v.vehicleName}" deleted` };
   }
 }

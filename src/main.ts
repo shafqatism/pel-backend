@@ -23,7 +23,13 @@ async function bootstrap() {
   // ─── CORS ───
   const allowedOrigins: (string | RegExp)[] = [
     'http://localhost:3000',
+    'http://localhost:3001',
+    'http://localhost:3002',
     'http://localhost:5173',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:3001',
+    'http://127.0.0.1:3002',
+    'http://127.0.0.1:5173',
     'https://pel-frontend.vercel.app',
     /^https:\/\/pel-frontend.*\.vercel\.app$/,
     process.env.FRONTEND_URL,
@@ -32,6 +38,8 @@ async function bootstrap() {
   app.enableCors({
     origin: allowedOrigins,
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
   });
 
   // ─── Validation ───

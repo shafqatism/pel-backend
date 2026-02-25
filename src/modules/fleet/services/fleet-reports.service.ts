@@ -1,41 +1,34 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { PrismaService } from '../../../prisma/prisma.service';
 import { FastifyReply } from 'fastify';
-import { Vehicle, Trip, FuelLog, MaintenanceRecord, VehicleAssignment } from '../entities';
 import { ExportUtils } from 'src/common/utils/export.utils';
 
 @Injectable()
 export class FleetReportsService {
-  constructor(
-    @InjectRepository(Vehicle) private readonly vehicleRepo: Repository<Vehicle>,
-    @InjectRepository(Trip) private readonly tripRepo: Repository<Trip>,
-    @InjectRepository(FuelLog) private readonly fuelRepo: Repository<FuelLog>,
-    @InjectRepository(MaintenanceRecord) private readonly maintRepo: Repository<MaintenanceRecord>,
-    @InjectRepository(VehicleAssignment) private readonly assignRepo: Repository<VehicleAssignment>,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async getStats() {
-    const vehicles = await this.vehicleRepo.find();
+    const vehicles = await this.prisma.vehicle.findMany();
     const total = vehicles.length;
     const available = vehicles.filter((v) => v.status === 'active' && !v.currentDriverName).length;
     const assigned = vehicles.filter((v) => !!v.currentDriverName).length;
 
-    const byType = Object.entries(
-      vehicles.reduce(
-        (acc, v) => {
-          acc[v.type] = (acc[v.type] || 0) + 1;
-          return acc;
-        },
-        {} as Record<string, number>,
-      ),
-    ).map(([name, count]) => ({ name, count }));
+    const counts = vehicles.reduce((acc, v) => {
+      acc[v.type] = (acc[v.type] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    const byType = Object.entries(counts).map(([name, count]) => ({ name, count }));
 
     return { totalVehicles: total, availableVehicles: available, assignedVehicles: assigned, byType };
   }
 
   async getUtilization() {
-    const trips = await this.tripRepo.find({ relations: ['vehicle'], order: { tripDate: 'DESC' }, take: 100 });
+    const trips = await this.prisma.trip.findMany({
+      include: { vehicle: true },
+      orderBy: { tripDate: 'desc' },
+      take: 100,
+    });
     return trips.map((t) => ({
       vehicleName: t.vehicle?.vehicleName,
       registrationNumber: t.vehicle?.registrationNumber,
@@ -46,33 +39,125 @@ export class FleetReportsService {
   }
 
   async getFuelConsumption() {
-    const logs = await this.fuelRepo
-      .createQueryBuilder('f')
-      .leftJoin('f.vehicle', 'v')
-      .select('v.vehicleName', 'vehicleName')
-      .addSelect('v.registrationNumber', 'registrationNumber')
-      .addSelect('SUM(f.quantityLiters)', 'totalLiters')
-      .addSelect('SUM(f.totalCost)', 'totalCost')
-      .groupBy('v.id')
-      .addGroupBy('v.vehicleName')
-      .addGroupBy('v.registrationNumber')
-      .getRawMany();
-    return logs;
+    const logs = await this.prisma.fuelLog.groupBy({
+      by: ['vehicleId'],
+      _sum: {
+        quantityLiters: true,
+        totalCost: true,
+      },
+    });
+
+    // Get vehicle details for these IDs
+    const vehicleIds = logs.map(l => l.vehicleId);
+    const vehicles = await this.prisma.vehicle.findMany({
+      where: { id: { in: vehicleIds } },
+      select: { id: true, vehicleName: true, registrationNumber: true }
+    });
+
+    const vehicleMap = new Map(vehicles.map(v => [v.id, v]));
+
+    return logs.map(l => ({
+      vehicleName: vehicleMap.get(l.vehicleId)?.vehicleName,
+      registrationNumber: vehicleMap.get(l.vehicleId)?.registrationNumber,
+      totalLiters: l._sum.quantityLiters,
+      totalCost: l._sum.totalCost,
+    }));
   }
 
   async getMaintenanceCosts() {
-    const records = await this.maintRepo
-      .createQueryBuilder('m')
-      .leftJoin('m.vehicle', 'v')
-      .select('v.vehicleName', 'vehicleName')
-      .addSelect('v.registrationNumber', 'registrationNumber')
-      .addSelect('SUM(m.costPkr)', 'totalCost')
-      .addSelect('COUNT(m.id)', 'totalRecords')
-      .groupBy('v.id')
-      .addGroupBy('v.vehicleName')
-      .addGroupBy('v.registrationNumber')
-      .getRawMany();
-    return records;
+    const logs = await this.prisma.maintenanceRecord.groupBy({
+      by: ['vehicleId'],
+      _sum: {
+        costPkr: true,
+      },
+      _count: {
+        id: true,
+      }
+    });
+
+    const vehicleIds = logs.map(l => l.vehicleId);
+    const vehicles = await this.prisma.vehicle.findMany({
+      where: { id: { in: vehicleIds } },
+      select: { id: true, vehicleName: true, registrationNumber: true }
+    });
+
+    const vehicleMap = new Map(vehicles.map(v => [v.id, v]));
+
+    return logs.map(l => ({
+      vehicleName: vehicleMap.get(l.vehicleId)?.vehicleName,
+      registrationNumber: vehicleMap.get(l.vehicleId)?.registrationNumber,
+      totalCost: l._sum.costPkr,
+      totalRecords: l._count.id,
+    }));
+  }
+
+  async getFleetSummary() {
+    console.log('[FleetReportsService] Aggregating summary data...');
+    const vehicles = await this.prisma.vehicle.findMany({
+      select: {
+        id: true,
+        registrationNumber: true,
+        vehicleName: true,
+        model: true,
+        status: true,
+        _count: {
+          select: {
+            trips: true,
+            fuelLogs: true,
+            maintenanceRecords: true,
+            assignments: true,
+          }
+        }
+      }
+    });
+
+    const fuelStats = await this.prisma.fuelLog.groupBy({
+      by: ['vehicleId'],
+      _sum: { totalCost: true, quantityLiters: true }
+    });
+
+    const maintenanceStats = await this.prisma.maintenanceRecord.groupBy({
+      by: ['vehicleId'],
+      _sum: { costPkr: true }
+    });
+
+    const tripStats = await this.prisma.trip.groupBy({
+      by: ['vehicleId'],
+      _sum: { totalKm: true }
+    });
+
+    const fuelMap = new Map(fuelStats.map(s => [s.vehicleId, s]));
+    const maintMap = new Map(maintenanceStats.map(s => [s.vehicleId, s]));
+    const tripMap = new Map(tripStats.map(s => [s.vehicleId, s]));
+
+    try {
+      return vehicles.map(v => ({
+        ...v,
+        totalKm: Number(tripMap.get(v.id)?._sum?.totalKm || 0),
+        totalFuelCost: Number(fuelMap.get(v.id)?._sum?.totalCost || 0),
+        totalFuelLiters: Number(fuelMap.get(v.id)?._sum?.quantityLiters || 0),
+        totalMaintenanceCost: Number(maintMap.get(v.id)?._sum?.costPkr || 0),
+        tripCount: v._count.trips,
+        fuelCount: v._count.fuelLogs,
+        maintenanceCount: v._count.maintenanceRecords,
+        assignmentCount: v._count.assignments,
+      }));
+    } catch (err) {
+      console.error('Error in getFleetSummary mapping:', err);
+      throw err;
+    }
+  }
+
+  async getVehicleFullReport(id: string) {
+    return this.prisma.vehicle.findUnique({
+      where: { id },
+      include: {
+        trips: { orderBy: { tripDate: 'desc' } },
+        fuelLogs: { orderBy: { date: 'desc' } },
+        maintenanceRecords: { orderBy: { maintenanceDate: 'desc' } },
+        assignments: { orderBy: { assignmentDate: 'desc' } },
+      }
+    });
   }
 
   async exportData(type: string, format: 'csv' | 'excel' | 'pdf', reply: FastifyReply) {
@@ -81,10 +166,8 @@ export class FleetReportsService {
     let title = '';
 
     switch (type) {
-
-      // ─── Vehicles ───────────────────────────────────────────────────────────
       case 'vehicles':
-        data = await this.vehicleRepo.find({ order: { registrationNumber: 'ASC' } });
+        data = await this.prisma.vehicle.findMany({ orderBy: { registrationNumber: 'asc' } });
         title = 'Vehicle Fleet Registry';
         cols = [
           { header: 'Reg #',            key: 'registrationNumber', width: 18 },
@@ -103,10 +186,9 @@ export class FleetReportsService {
         ];
         break;
 
-      // ─── Trips ──────────────────────────────────────────────────────────────
       case 'trips':
-        data = await this.tripRepo.find({ relations: ['vehicle'], order: { tripDate: 'DESC' } });
-        data = data.map((t) => ({
+        const trips = await this.prisma.trip.findMany({ include: { vehicle: true }, orderBy: { tripDate: 'desc' } });
+        data = trips.map((t) => ({
           tripDate: t.tripDate,
           regNo: t.vehicle?.registrationNumber ?? '',
           vehicleName: t.vehicle?.vehicleName ?? '',
@@ -137,10 +219,9 @@ export class FleetReportsService {
         ];
         break;
 
-      // ─── Fuel ───────────────────────────────────────────────────────────────
       case 'fuel':
-        data = await this.fuelRepo.find({ relations: ['vehicle'], order: { date: 'DESC' } });
-        data = data.map((f) => ({
+        const fuelLogs = await this.prisma.fuelLog.findMany({ include: { vehicle: true }, orderBy: { date: 'desc' } });
+        data = fuelLogs.map((f) => ({
           date: f.date,
           regNo: f.vehicle?.registrationNumber ?? '',
           vehicleName: f.vehicle?.vehicleName ?? '',
@@ -165,10 +246,9 @@ export class FleetReportsService {
         ];
         break;
 
-      // ─── Maintenance ────────────────────────────────────────────────────────
       case 'maintenance':
-        data = await this.maintRepo.find({ relations: ['vehicle'], order: { maintenanceDate: 'DESC' } });
-        data = data.map((m) => ({
+        const maintRecords = await this.prisma.maintenanceRecord.findMany({ include: { vehicle: true }, orderBy: { maintenanceDate: 'desc' } });
+        data = maintRecords.map((m) => ({
           maintenanceDate: m.maintenanceDate,
           regNo: m.vehicle?.registrationNumber ?? '',
           vehicleName: m.vehicle?.vehicleName ?? '',
@@ -197,10 +277,9 @@ export class FleetReportsService {
         ];
         break;
 
-      // ─── Assignments ────────────────────────────────────────────────────────
       case 'assignments':
-        data = await this.assignRepo.find({ relations: ['vehicle'], order: { assignmentDate: 'DESC' } });
-        data = data.map((a) => ({
+        const assignments = await this.prisma.vehicleAssignment.findMany({ include: { vehicle: true }, orderBy: { assignmentDate: 'desc' } });
+        data = assignments.map((a) => ({
           assignmentDate: a.assignmentDate,
           regNo: a.vehicle?.registrationNumber ?? '',
           vehicleName: a.vehicle?.vehicleName ?? '',

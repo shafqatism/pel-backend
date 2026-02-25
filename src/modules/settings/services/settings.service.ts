@@ -1,45 +1,105 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { Settings } from '../entities/settings.entity';
+import { PrismaService } from '../../../prisma/prisma.service';
 import { UpdateSettingsDto } from '../dto/update-settings.dto';
 
 @Injectable()
 export class SettingsService implements OnModuleInit {
-  constructor(
-    @InjectRepository(Settings)
-    private readonly settingsRepo: Repository<Settings>,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async onModuleInit() {
-    // Ensure at least one settings record exists
-    const count = await this.settingsRepo.count();
+    const count = await this.prisma.settings.count();
     if (count === 0) {
-      const defaultSettings = this.settingsRepo.create({
-        companyName: 'Petroleum Exploration Limited',
-        currency: 'PKR',
-        unitSystem: 'metric',
-        maintenanceIntervalKm: 5000,
-        systemEmail: 'admin@pelexploration.com.pk',
-        brandingColors: {
-          primary: '#d97706', // amber-600
-          secondary: '#1f2937', // gray-800
-          accent: '#fbbf24', // amber-400
+      await this.prisma.settings.create({
+        data: {
+          companyName: 'Petroleum Exploration Limited',
+          currency: 'PKR',
+          unitSystem: 'metric',
+          maintenanceIntervalKm: 5000,
+          systemEmail: 'admin@pelexploration.com.pk',
+          brandingColors: {
+            primary: '#d97706',
+            primaryForeground: '#ffffff',
+            secondary: '#1f2937',
+            secondaryForeground: '#ffffff',
+            accent: '#fbbf24',
+            accentForeground: '#000000',
+            success: '#10b981',
+            successForeground: '#ffffff',
+            warning: '#f59e0b',
+            warningForeground: '#ffffff',
+            destructive: '#ef4444',
+            destructiveForeground: '#ffffff',
+            background: '#ffffff',
+            foreground: '#09090b',
+            card: '#ffffff',
+            cardForeground: '#09090b',
+            popover: '#ffffff',
+            popoverForeground: '#09090b',
+            border: '#e4e4e7',
+            input: '#e4e4e7',
+            ring: '#d97706',
+            sidebar: '#1f2937',
+            sidebarForeground: '#a1a1aa',
+            sidebarAccent: '#d97706',
+            sidebarAccentForeground: '#ffffff',
+          },
+          enableNotifications: true,
         },
-        enableNotifications: true,
       });
-      await this.settingsRepo.save(defaultSettings);
     }
   }
 
   async getSettings() {
-    const settings = await this.settingsRepo.find();
-    return settings[0];
+    const settings = await this.prisma.settings.findMany();
+    const s = settings[0];
+    if (!s) return null;
+
+    // Merge with defaults to ensure all keys exist for the dynamic theme
+    const defaults = {
+      primary: '#d97706',
+      primaryForeground: '#ffffff',
+      secondary: '#1f2937',
+      secondaryForeground: '#ffffff',
+      accent: '#fbbf24',
+      accentForeground: '#000000',
+      success: '#10b981',
+      successForeground: '#ffffff',
+      warning: '#f59e0b',
+      warningForeground: '#ffffff',
+      destructive: '#ef4444',
+      destructiveForeground: '#ffffff',
+      background: '#ffffff',
+      foreground: '#09090b',
+      card: '#ffffff',
+      cardForeground: '#09090b',
+      popover: '#ffffff',
+      popoverForeground: '#09090b',
+      border: '#e4e4e7',
+      input: '#e4e4e7',
+      ring: '#d97706',
+      sidebar: '#1f2937',
+      sidebarForeground: '#a1a1aa',
+      sidebarAccent: '#d97706',
+      sidebarAccentForeground: '#ffffff',
+    };
+
+    return {
+      ...s,
+      brandingColors: {
+        ...defaults,
+        ...(s.brandingColors as object || {}),
+      },
+    };
   }
 
   async updateSettings(dto: UpdateSettingsDto) {
     const settings = await this.getSettings();
-    Object.assign(settings, dto);
-    return this.settingsRepo.save(settings);
+    if (!settings) {
+      throw new Error('Settings not found');
+    }
+    return this.prisma.settings.update({
+      where: { id: (settings as any).id }, // Cast to any to access the original Prisma model id
+      data: dto as any,
+    });
   }
 }
